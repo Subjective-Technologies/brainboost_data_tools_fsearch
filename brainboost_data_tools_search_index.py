@@ -156,6 +156,87 @@ class FileSearchApp(QMainWindow):
         # Set the window icon from the embedded SVG
         self.set_window_icon()
 
+        # Apply dark theme styling
+        self.setStyleSheet("""
+            QMainWindow, QWidget {
+                background-color: #121212;
+                color: #e6e6e6;
+            }
+            QLabel {
+                color: #e6e6e6;
+            }
+            QLineEdit, QComboBox, QDateEdit, QTextEdit {
+                background-color: #1e1e1e;
+                color: #e6e6e6;
+                border: 1px solid #3a3a3a;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            QLineEdit::placeholder {
+                color: #9a9a9a;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1e1e1e;
+                color: #e6e6e6;
+                selection-background-color: #2a5ea6;
+            }
+            QPushButton {
+                background-color: #2b2b2b;
+                color: #e6e6e6;
+                border: 1px solid #3a3a3a;
+                border-radius: 6px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #343434;
+            }
+            QPushButton:pressed {
+                background-color: #262626;
+            }
+            QTableWidget {
+                background-color: #141414;
+                gridline-color: #2a2a2a;
+            }
+            QHeaderView::section {
+                background-color: #1c1c1c;
+                color: #e6e6e6;
+                padding: 6px;
+                border: 1px solid #2a2a2a;
+            }
+            QTableWidget::item:selected {
+                background-color: #2a5ea6;
+                color: #ffffff;
+            }
+            QMenuBar, QMenu {
+                background-color: #1a1a1a;
+                color: #e6e6e6;
+            }
+            QMenu::item:selected {
+                background-color: #2a5ea6;
+            }
+            QProgressBar {
+                background-color: #1e1e1e;
+                border: 1px solid #3a3a3a;
+                color: #e6e6e6;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #2a5ea6;
+            }
+            QScrollBar:vertical {
+                background: #1a1a1a;
+                width: 10px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #3a3a3a;
+                border-radius: 4px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
         # Create central widget and main layout
         central_widget = QWidget()
         main_layout = QVBoxLayout()
