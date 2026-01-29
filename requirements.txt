@@ -1,0 +1,5 @@
+PyQt5>=5.15.0
+pytest==8.0.0
+pytest-cov==4.1.0
+-e file:///brainboost/packages/brainboost_data_source_logger_package
+-e file:///brainboost/packages/brainboost_configuration_package

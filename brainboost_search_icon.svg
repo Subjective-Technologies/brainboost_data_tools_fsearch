@@ -1,0 +1,27 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Circle -->
+  <circle cx="128" cy="128" r="120" fill="#1a1a1a" stroke="#ff69b4" stroke-width="8"/>
+  
+  <!-- File Icon -->
+  <rect x="76" y="80" width="80" height="100" fill="#ffffff" rx="8" ry="8" stroke="#ffff00" stroke-width="4"/>
+  <polyline points="76,80 156,80 156,160" fill="none" stroke="#ffff00" stroke-width="4"/>
+  
+  <!-- Magnifying Glass -->
+  <circle cx="176" cy="176" r="32" fill="none" stroke="#ffff00" stroke-width="8"/>
+  <line x1="200" y1="200" x2="240" y2="240" stroke="#ff69b4" stroke-width="8" stroke-linecap="round"/>
+  
+  <!-- Glow Effects -->
+  <circle cx="176" cy="176" r="40" fill="none" stroke="rgba(255, 105, 180, 0.3)" stroke-width="16" filter="url(#glow)"/>
+  
+  <!-- Filters for Glow -->
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="10" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="coloredBlur"/>
+      </feMerge>
+    </filter>
+  </defs>
+</svg>
