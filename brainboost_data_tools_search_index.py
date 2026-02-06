@@ -5,10 +5,12 @@ import sqlite3
 import time  # For measuring execution time
 import json  # For parsing global.config
 import subprocess  # For running external commands
+import shutil
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
     QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QDateEdit, QMessageBox,
-    QCheckBox, QSizePolicy, QFileDialog, QAction, QMenu, QTextEdit, QProgressBar
+    QCheckBox, QSizePolicy, QFileDialog, QAction, QMenu, QTextEdit, QProgressBar,
+    QGroupBox, QGridLayout
 )
 from PyQt5.QtCore import Qt, QDate, QSize, QPoint, QUrl, QMimeData, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QFont, QTextOption, QCursor
@@ -47,11 +49,133 @@ SVG_ICON = """
 </svg>
 """
 
-# Default rclone config path
-DEFAULT_RCLONE_CONFIG_PATH = "/brainboost/brainboost_server/server_rclone.conf"
+# Embedded SVG Icon for Rclone Config Manager
+SVG_RCLONE_TOOL_ICON = """
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <rect x="8" y="12" width="112" height="84" rx="10" fill="#1B1B1B" stroke="#3B82F6" stroke-width="4"/>
+  <rect x="20" y="28" width="88" height="14" rx="6" fill="#2A2A2A"/>
+  <rect x="20" y="50" width="88" height="14" rx="6" fill="#2A2A2A"/>
+  <rect x="20" y="72" width="60" height="12" rx="6" fill="#2A2A2A"/>
+  <circle cx="96" cy="78" r="16" fill="#3B82F6"/>
+  <path d="M90 78h12" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M96 72v12" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <rect x="22" y="102" width="84" height="12" rx="6" fill="#3A3A3A"/>
+</svg>
+"""
 
-# Default rclone_list_files.py script path
-DEFAULT_SEARCH_INDEX_SCRIPT_PATH = "/brainboost/brainboost_data/data_source/brainboost_data_source_rclone/rclone_list_files.py"
+def _first_existing_path(candidates, fallback):
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return fallback
+
+
+def resolve_default_paths():
+    if os.name == "nt":
+        root_candidates = [
+            r"C:\brainboost",
+            os.path.join(os.path.expanduser("~"), "brainboost"),
+        ]
+    else:
+        root_candidates = [
+            "/brainboost",
+            os.path.expanduser("~/brainboost"),
+        ]
+
+    root_fallback = root_candidates[0]
+    root_dir = _first_existing_path(root_candidates, root_fallback)
+
+    data_candidates = [
+        os.path.join(root_dir, "brainboost_data"),
+        r"C:\brainboost\brainboost_data" if os.name == "nt" else None,
+    ]
+    data_fallback = data_candidates[0]
+    data_dir = _first_existing_path(data_candidates, data_fallback)
+
+    return {
+        "rclone_config_path": os.path.join(root_dir, "brainboost_server", "server_rclone.conf"),
+        "search_index_script_path": os.path.join(
+            data_dir, "data_source", "brainboost_data_source_rclone", "rclone_list_files.py"
+        ),
+        "db_path": os.path.join(
+            data_dir, "data_source", "brainboost_data_source_rclone", "search_rclone_index_db.sqlite"
+        ),
+        "drives_dir": os.path.join(data_dir, "data_storage", "storage_clouds"),
+    }
+
+
+def resolve_rclone_executable(config_value=None):
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    candidates = []
+    env_path = os.environ.get("RCLONE_PATH") or os.environ.get("RCLONE_EXE")
+    if env_path:
+        candidates.append(env_path)
+    if config_value:
+        candidates.append(str(config_value))
+
+    for candidate in candidates:
+        expanded = os.path.expandvars(os.path.expanduser(candidate))
+        if not os.path.isabs(expanded):
+            expanded = os.path.abspath(os.path.join(project_root, expanded))
+        if os.path.isfile(expanded):
+            return expanded
+
+    which_path = shutil.which("rclone")
+    if which_path:
+        return which_path
+
+    return None
+
+
+def read_subjective_conf_value(key: str):
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    conf_path = os.path.join(project_root, "subjective.conf")
+    if not os.path.isfile(conf_path):
+        return None
+    try:
+        with open(conf_path, "r", encoding="utf-8") as conf_file:
+            for line in conf_file:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                k, v = stripped.split("=", 1)
+                if k.strip() == key:
+                    return v.strip()
+    except Exception:
+        return None
+    return None
+
+
+def read_last_passed_remotes():
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    userdata_path = read_subjective_conf_value("USERDATA_PATH") or "com_subjective_userdata"
+    if not os.path.isabs(userdata_path):
+        userdata_path = os.path.abspath(os.path.join(project_root, userdata_path))
+    results_path = os.path.join(userdata_path, "com_subjective_rclone", "last_passed_remotes.json")
+    if not os.path.isfile(results_path):
+        return None
+    try:
+        with open(results_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        remotes = payload.get("passed")
+        config_path = payload.get("config_path")
+        if isinstance(remotes, list):
+            return remotes, config_path
+    except Exception:
+        return None
+    return None
+
+
+def passed_remotes_file_path():
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    userdata_path = read_subjective_conf_value("USERDATA_PATH") or "com_subjective_userdata"
+    if not os.path.isabs(userdata_path):
+        userdata_path = os.path.abspath(os.path.join(project_root, userdata_path))
+    return os.path.join(userdata_path, "com_subjective_rclone", "last_passed_remotes.json")
+
+
+DEFAULT_PATHS = resolve_default_paths()
+PREFERRED_RCLONE_CONFIG_PATH = r"C:\brainboost\brainboost_computer\brainboost_server\server_rclone.conf"
 
 # Path to global.config
 GLOBAL_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "global.config")
@@ -66,17 +190,21 @@ class ScriptRunner(QThread):
     error_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(int)  # Emit return code
 
-    def __init__(self, script_path):
+    def __init__(self, script_path, python_exe, args=None, env=None):
         super().__init__()
         self.script_path = script_path
+        self.python_exe = python_exe
+        self.args = args or []
+        self.env = env
 
     def run(self):
         try:
             process = subprocess.Popen(
-                ["python3", self.script_path],
+                [self.python_exe, self.script_path, *self.args],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=self.env,
             )
 
             # Read stdout
@@ -98,23 +226,83 @@ class ScriptRunner(QThread):
             self.finished_signal.emit(-1)
 
 
+class FilterLoader(QThread):
+    """
+    Worker thread to load filter values from the database without blocking the UI.
+    """
+    loaded_signal = pyqtSignal(list, list)
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, db_path):
+        super().__init__()
+        self.db_path = db_path
+
+    def run(self):
+        if not self.db_path or not os.path.exists(self.db_path):
+            self.error_signal.emit(f"Database not found at: {self.db_path}")
+            return
+
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # Ensure indexes exist to speed up DISTINCT queries.
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_drive ON files(drive)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_file_type ON files(file_type)")
+            conn.commit()
+
+            cursor.execute(
+                "SELECT DISTINCT drive FROM files "
+                "WHERE drive IS NOT NULL AND drive <> '' "
+                "ORDER BY drive"
+            )
+            drives = [row[0] for row in cursor.fetchall()]
+
+            cursor.execute(
+                "SELECT DISTINCT file_type FROM files "
+                "WHERE file_type IS NOT NULL AND file_type <> '' "
+                "ORDER BY file_type LIMIT 1000"
+            )
+            file_types = [row[0] for row in cursor.fetchall()]
+
+            conn.close()
+            self.loaded_signal.emit(drives, file_types)
+        except Exception as e:
+            self.error_signal.emit(str(e))
+
+
 class FileSearchApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("BrainBoost File Search")
         self.resize(1200, 800)  # Increased size for better layout
 
-        # Initialize rclone config path
-        self.rclone_config_path = DEFAULT_RCLONE_CONFIG_PATH
+        # Load config overrides (if any)
+        config = self.load_global_config()
 
-        # Initialize search index script path
-        self.search_index_script_path = DEFAULT_SEARCH_INDEX_SCRIPT_PATH
+        # Initialize paths with OS-aware defaults
+        preferred_path = PREFERRED_RCLONE_CONFIG_PATH if os.path.exists(PREFERRED_RCLONE_CONFIG_PATH) else None
+        self.rclone_config_path = config.get(
+            "rclone_config_path",
+            preferred_path or DEFAULT_PATHS["rclone_config_path"],
+        )
+        self.search_index_script_path = config.get(
+            "search_index_script_path", DEFAULT_PATHS["search_index_script_path"]
+        )
+        self.db_path = config.get("db_path", DEFAULT_PATHS["db_path"])
+        self.drives_dir = config.get("drives_dir", DEFAULT_PATHS["drives_dir"])
+        self.rclone_path = resolve_rclone_executable(config.get("rclone_path"))
+        if not self.rclone_path:
+            conf_rclone_path = read_subjective_conf_value("RCLONE_PATH")
+            self.rclone_path = resolve_rclone_executable(conf_rclone_path)
+        self.rclone_tool_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "tool_rclone_config_manager.py")
+        )
 
-        # Path to the SQLite database
-        self.db_path = "/brainboost/brainboost_data/data_source/brainboost_data_source_rclone/search_rclone_index_db.sqlite"
-
-        # Read global.config
-        self.drives_dir = self.read_global_config()
+        # Filter loading state
+        self.filter_loader = None
+        self._filter_loading = False
+        self._filters_loaded = False
 
         print("Initializing UI...")
         self.initUI()
@@ -124,112 +312,129 @@ class FileSearchApp(QMainWindow):
         # **Set Focus on the Name Text Field After UI Initialization Using QTimer**
         QTimer.singleShot(0, self.name_input.setFocus)
 
-    def read_global_config(self):
-        """Read the global.config file to get configuration settings."""
+    def load_global_config(self):
+        """Read global.config file to get configuration settings (if present)."""
         print("Reading global.config...")
         if not os.path.exists(GLOBAL_CONFIG_PATH):
-            print(f"global.config not found at {GLOBAL_CONFIG_PATH}. Using default drives directory.")
-            # Define a default drives directory
-            default_drives_dir = "/brainboost/brainboost_data/data_storage/storage_clouds"
-            os.makedirs(default_drives_dir, exist_ok=True)
-            return default_drives_dir
+            print(f"global.config not found at {GLOBAL_CONFIG_PATH}. Using defaults.")
+            return {}
 
         try:
             with open(GLOBAL_CONFIG_PATH, 'r') as config_file:
                 config_data = json.load(config_file)
-                drives_dir = config_data.get("drives_dir", "/brainboost/brainboost_data/data_storage/storage_clouds")
-                os.makedirs(drives_dir, exist_ok=True)
-                print(f"Drives directory set to: {drives_dir}")
-                return drives_dir
+                if not isinstance(config_data, dict):
+                    print("global.config contents are not a JSON object. Using defaults.")
+                    return {}
+                return config_data
         except json.JSONDecodeError as e:
-            print(f"Error parsing global.config: {e}. Using default drives directory.")
-            default_drives_dir = "/brainboost/brainboost_data/data_storage/storage_clouds"
-            os.makedirs(default_drives_dir, exist_ok=True)
-            return default_drives_dir
+            print(f"Error parsing global.config: {e}. Using defaults.")
+            return {}
         except Exception as e:
-            print(f"Unexpected error reading global.config: {e}. Using default drives directory.")
-            default_drives_dir = "/brainboost/brainboost_data/data_storage/storage_clouds"
-            os.makedirs(default_drives_dir, exist_ok=True)
-            return default_drives_dir
+            print(f"Unexpected error reading global.config: {e}. Using defaults.")
+            return {}
 
     def initUI(self):
         # Set the window icon from the embedded SVG
         self.set_window_icon()
 
-        # Apply dark theme styling
+        # Apply dark theme styling consistent with other QT UIs
         self.setStyleSheet("""
             QMainWindow, QWidget {
                 background-color: #121212;
-                color: #e6e6e6;
+                color: #EAEAEA;
             }
             QLabel {
-                color: #e6e6e6;
+                color: #EAEAEA;
+            }
+            QGroupBox {
+                background-color: #1E1E1E;
+                border: 1px solid #2A2A2A;
+                border-radius: 8px;
+                margin-top: 8px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                font-weight: bold;
             }
             QLineEdit, QComboBox, QDateEdit, QTextEdit {
-                background-color: #1e1e1e;
-                color: #e6e6e6;
-                border: 1px solid #3a3a3a;
+                background-color: #1E1E1E;
+                color: #EAEAEA;
+                border: 1px solid #3A3A3A;
                 border-radius: 4px;
                 padding: 6px;
             }
             QLineEdit::placeholder {
-                color: #9a9a9a;
+                color: #9A9A9A;
+            }
+            QComboBox::drop-down {
+                border-left: 1px solid #3A3A3A;
             }
             QComboBox QAbstractItemView {
-                background-color: #1e1e1e;
-                color: #e6e6e6;
-                selection-background-color: #2a5ea6;
+                background-color: #1E1E1E;
+                color: #EAEAEA;
+                selection-background-color: #2A5EA6;
             }
             QPushButton {
-                background-color: #2b2b2b;
-                color: #e6e6e6;
-                border: 1px solid #3a3a3a;
-                border-radius: 6px;
-                padding: 6px 12px;
+                background-color: #242424;
+                color: #EAEAEA;
+                border: 1px solid #3A3A3A;
+                border-radius: 4px;
+                padding: 6px 14px;
+                font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #343434;
+                background-color: #2E2E2E;
             }
             QPushButton:pressed {
-                background-color: #262626;
+                background-color: #1F1F1F;
             }
             QTableWidget {
                 background-color: #141414;
-                gridline-color: #2a2a2a;
+                gridline-color: #2A2A2A;
+                border: 1px solid #2A2A2A;
             }
             QHeaderView::section {
-                background-color: #1c1c1c;
-                color: #e6e6e6;
+                background-color: #1C1C1C;
+                color: #EAEAEA;
                 padding: 6px;
-                border: 1px solid #2a2a2a;
+                border: 1px solid #2A2A2A;
+            }
+            QTableWidget::item {
+                padding: 4px;
             }
             QTableWidget::item:selected {
-                background-color: #2a5ea6;
-                color: #ffffff;
+                background-color: #2A5EA6;
+                color: #FFFFFF;
             }
             QMenuBar, QMenu {
-                background-color: #1a1a1a;
-                color: #e6e6e6;
+                background-color: #1A1A1A;
+                color: #EAEAEA;
             }
             QMenu::item:selected {
-                background-color: #2a5ea6;
+                background-color: #2A5EA6;
             }
             QProgressBar {
-                background-color: #1e1e1e;
-                border: 1px solid #3a3a3a;
-                color: #e6e6e6;
+                background-color: #1E1E1E;
+                border: 1px solid #3A3A3A;
+                color: #EAEAEA;
                 text-align: center;
             }
             QProgressBar::chunk {
-                background-color: #2a5ea6;
+                background-color: #2A5EA6;
+            }
+            QStatusBar {
+                background-color: #1A1A1A;
+                color: #CFCFCF;
             }
             QScrollBar:vertical {
-                background: #1a1a1a;
+                background: #1A1A1A;
                 width: 10px;
                 margin: 0px;
             }
             QScrollBar::handle:vertical {
-                background: #3a3a3a;
+                background: #3A3A3A;
                 border-radius: 4px;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
@@ -240,145 +445,99 @@ class FileSearchApp(QMainWindow):
         # Create central widget and main layout
         central_widget = QWidget()
         main_layout = QVBoxLayout()
-        main_layout.setAlignment(Qt.AlignTop)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(10)
 
-        # Top Layout: Name Search Box centered and Icon at top right
-        top_layout = QHBoxLayout()
+        self.setFont(QFont("Segoe UI", 10))
 
-        # Spacer to push the Search Box to center
-        top_spacer_left = QHBoxLayout()
-        top_spacer_left.addStretch()
-        top_layout.addLayout(top_spacer_left)
-
-        # Name Search Box (3 times bigger, centered text, increased text size, half width)
-        name_layout = QVBoxLayout()
-        name_label = QLabel("Name:")
-        name_label.setFont(QFont("Arial", 19))  # Increased font size by ~30% from 14 to 19
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter part or full file name")
-        self.name_input.setFont(QFont("Arial", 26))  # Increased font size by ~30% from 20 to 26
-        self.name_input.setAlignment(Qt.AlignCenter)  # Center the text within the search box
-        self.name_input.setFixedWidth(600)  # Adjusted width to half (assuming original was 1200)
-        self.name_input.setFixedHeight(60)  # Increased height for better visibility
-        self.name_input.returnPressed.connect(self.perform_search)  # Trigger search on Enter
-        name_layout.addWidget(name_label, alignment=Qt.AlignCenter)
-        name_layout.addWidget(self.name_input, alignment=Qt.AlignCenter)
-        top_layout.addLayout(name_layout)
-
-        # Spacer between Search Box and Icon
-        top_spacer_right = QHBoxLayout()
-        top_spacer_right.addStretch()
-        top_layout.addLayout(top_spacer_right)
-
-        # Icon Display (Top Right, 50% smaller)
+        # Header row with title and icon
+        header_layout = QHBoxLayout()
+        title_label = QLabel("File Search")
+        title_label.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
         icon_label = QLabel()
         icon_pixmap = self.render_svg_icon()
-        icon_label.setPixmap(icon_pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))  # 50% smaller
-        icon_label.setFixedSize(64, 64)
-        top_layout.addWidget(icon_label, alignment=Qt.AlignRight | Qt.AlignTop)
+        icon_label.setPixmap(icon_pixmap.scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        icon_label.setFixedSize(36, 36)
+        header_layout.addWidget(icon_label)
+        main_layout.addLayout(header_layout)
 
-        # Add top layout to main layout
-        main_layout.addLayout(top_layout)
+        # Search row
+        search_layout = QHBoxLayout()
+        name_label = QLabel("Name")
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Enter part or full file name")
+        self.name_input.setMinimumHeight(32)
+        self.name_input.returnPressed.connect(self.perform_search)
+        self.search_button = QPushButton("Search")
+        self.search_button.setMinimumWidth(120)
+        self.search_button.clicked.connect(self.perform_search)
+        search_layout.addWidget(name_label)
+        search_layout.addWidget(self.name_input, 1)
+        search_layout.addWidget(self.search_button)
+        main_layout.addLayout(search_layout)
 
-        # Filters Layout: Organized into two rows of two filters each
-        filters_main_layout = QVBoxLayout()
+        # Filters group
+        filters_group = QGroupBox("Filters")
+        filters_layout = QGridLayout()
+        filters_layout.setHorizontalSpacing(12)
+        filters_layout.setVerticalSpacing(8)
+        filters_layout.setColumnStretch(1, 1)
+        filters_layout.setColumnStretch(3, 1)
 
-        # First Row: Size and Drive Filters
-        first_filter_row = QHBoxLayout()
-
-        # Size Filter
-        size_layout = QVBoxLayout()
-        size_label = QLabel("Size > (bytes):")
-        size_label.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
+        size_label = QLabel("Size > (bytes)")
         self.size_input = QLineEdit()
         self.size_input.setPlaceholderText("Enter minimum size")
-        self.size_input.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
-        self.size_input.setFixedWidth(300)
-        size_layout.addWidget(size_label)
-        size_layout.addWidget(self.size_input)
-        first_filter_row.addLayout(size_layout)
+        self.size_input.setMinimumHeight(28)
 
-        # Drive Filter
-        drive_layout = QVBoxLayout()
-        drive_label = QLabel("Drive:")
-        drive_label.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
+        drive_label = QLabel("Drive")
         self.drive_combo = QComboBox()
-        self.drive_combo.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
-        self.drive_combo.addItem("Any")
-        self.populate_drive_combo()
-        self.drive_combo.setFixedWidth(300)
-        drive_layout.addWidget(drive_label)
-        drive_layout.addWidget(self.drive_combo)
-        first_filter_row.addLayout(drive_layout)
+        self.drive_combo.addItem("Loading...")
+        self.drive_combo.setEnabled(False)
 
-        filters_main_layout.addLayout(first_filter_row)
-
-        # Second Row: Modified Date and File Type Filters
-        second_filter_row = QHBoxLayout()
-
-        # Modified Date Filter with Checkbox
-        date_layout = QVBoxLayout()
-        self.date_checkbox = QCheckBox("Filter by Modified Date:")
-        self.date_checkbox.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
-        self.date_checkbox.setChecked(False)  # Default unchecked
+        self.date_checkbox = QCheckBox("Modified after")
+        self.date_checkbox.setChecked(False)
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDate(QDate.currentDate())
-        self.date_edit.setEnabled(False)  # Disabled by default
-        self.date_edit.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
-        self.date_edit.setFixedWidth(300)
+        self.date_edit.setEnabled(False)
         self.date_checkbox.stateChanged.connect(self.toggle_date_filter)
-        date_layout.addWidget(self.date_checkbox)
-        date_layout.addWidget(self.date_edit)
-        second_filter_row.addLayout(date_layout)
 
-        # File Type Filter
-        file_type_layout = QVBoxLayout()
-        file_type_label = QLabel("File Type:")
-        file_type_label.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
+        file_type_label = QLabel("File Type")
         self.file_type_combo = QComboBox()
-        self.file_type_combo.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
-        self.file_type_combo.addItem("Any")
-        self.populate_file_type_combo()
-        self.file_type_combo.setFixedWidth(300)
-        file_type_layout.addWidget(file_type_label)
-        file_type_layout.addWidget(self.file_type_combo)
-        second_filter_row.addLayout(file_type_layout)
+        self.file_type_combo.addItem("Loading...")
+        self.file_type_combo.setEnabled(False)
 
-        filters_main_layout.addLayout(second_filter_row)
+        filters_layout.addWidget(size_label, 0, 0)
+        filters_layout.addWidget(self.size_input, 0, 1)
+        filters_layout.addWidget(drive_label, 0, 2)
+        filters_layout.addWidget(self.drive_combo, 0, 3)
+        filters_layout.addWidget(self.date_checkbox, 1, 0)
+        filters_layout.addWidget(self.date_edit, 1, 1)
+        filters_layout.addWidget(file_type_label, 1, 2)
+        filters_layout.addWidget(self.file_type_combo, 1, 3)
 
-        # Add filters layout to main layout
-        main_layout.addLayout(filters_main_layout)
+        filters_group.setLayout(filters_layout)
+        main_layout.addWidget(filters_group)
 
-        # **Rearranged: Search, Clear Filters, and Update Index Buttons Centered and Right-Aligned**
+        # Action buttons row
         button_layout = QHBoxLayout()
-
-        # Stretch to push buttons to the center/right
         button_layout.addStretch()
-
-        self.search_button = QPushButton("Search")
-        self.search_button.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
-        self.search_button.clicked.connect(self.perform_search)
-        self.search_button.setFixedWidth(150)  # Increased width from 120 to 150
-        button_layout.addWidget(self.search_button)
-
         self.clear_button = QPushButton("Clear Filters")
-        self.clear_button.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
+        self.clear_button.setMinimumWidth(140)
         self.clear_button.clicked.connect(self.clear_filters)
-        self.clear_button.setFixedWidth(180)  # Increased width from 150 to 180
-        button_layout.addWidget(self.clear_button)
-
-        # **New: Update Index Button Positioned Beside Clear Filters Button**
         self.update_index_button = QPushButton("Update Index")
-        self.update_index_button.setFont(QFont("Arial", 14))  # Increased font size
-        self.update_index_button.setFixedWidth(150)
+        self.update_index_button.setMinimumWidth(140)
         self.update_index_button.clicked.connect(self.update_index)
+        self.rclone_tool_button = QPushButton("Rclone Manager")
+        self.rclone_tool_button.setMinimumWidth(160)
+        self.rclone_tool_button.setIcon(self._svg_to_icon(SVG_RCLONE_TOOL_ICON, QSize(18, 18)))
+        self.rclone_tool_button.clicked.connect(self.launch_rclone_manager)
+        button_layout.addWidget(self.clear_button)
         button_layout.addWidget(self.update_index_button)
-        # **End of New Section**
-
-        button_layout.addStretch()
+        button_layout.addWidget(self.rclone_tool_button)
         main_layout.addLayout(button_layout)
-        # **End of Rearranged Section**
 
         # Results Table
         self.results_table = QTableWidget()
@@ -389,8 +548,7 @@ class FileSearchApp(QMainWindow):
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.results_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.results_table.setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
-        self.results_table.horizontalHeader().setFont(QFont("Arial", 14))  # Increased font size from 12 to 14
+        self.results_table.setAlternatingRowColors(True)
         self.results_table.verticalHeader().setVisible(False)
         self.results_table.setSortingEnabled(True)  # Enable sorting
         self.results_table.setWordWrap(True)  # Enable word wrap
@@ -416,8 +574,10 @@ class FileSearchApp(QMainWindow):
         # **New: Text Area for Update Index Output**
         self.update_output_text = QTextEdit()
         self.update_output_text.setReadOnly(True)
-        self.update_output_text.setStyleSheet("background-color: black; color: green;")
-        self.update_output_text.setFont(QFont("Courier", 12))  # Monospaced font for better readability
+        self.update_output_text.setStyleSheet(
+            "background-color: #0B0B0B; color: #9FE870; border: 1px solid #2A2A2A;"
+        )
+        self.update_output_text.setFont(QFont("Consolas", 9))  # Monospaced font for better readability
         self.update_output_text.hide()  # Initially hidden
         main_layout.addWidget(self.update_output_text)
         # **End of New Section**
@@ -453,8 +613,16 @@ class FileSearchApp(QMainWindow):
 
     def init_status_bar(self):
         """Initialize the status bar to display the rclone config path and drives_dir."""
-        self.statusBar().showMessage(f"rclone.config path: {self.rclone_config_path} | Mount Root: {self.drives_dir}")
-        print(f"Status bar initialized with rclone.config path: {self.rclone_config_path} and Mount Root: {self.drives_dir}")
+        self.update_status_bar()
+        print(
+            f"Status bar initialized with rclone.config path: {self.rclone_config_path}, "
+            f"Mount Root: {self.drives_dir}, DB: {self.db_path}"
+        )
+
+    def update_status_bar(self):
+        self.statusBar().showMessage(
+            f"rclone.config path: {self.rclone_config_path} | Mount Root: {self.drives_dir} | DB: {self.db_path}"
+        )
 
     def init_menu(self):
         """Initialize the menu bar with options to change the rclone config path and mount root."""
@@ -475,6 +643,16 @@ class FileSearchApp(QMainWindow):
         change_mount_root_action.triggered.connect(self.change_mount_root_directory)
         settings_menu.addAction(change_mount_root_action)
 
+    def launch_rclone_manager(self):
+        """Launch the standalone Rclone Config Manager tool."""
+        if not os.path.exists(self.rclone_tool_path):
+            self.show_error(f"Rclone Manager not found: {self.rclone_tool_path}")
+            return
+        try:
+            subprocess.Popen([sys.executable, self.rclone_tool_path])
+        except Exception as exc:
+            self.show_error(f"Failed to launch Rclone Manager: {exc}")
+
     def change_rclone_config_path(self):
         """Open a file dialog to allow the user to select a new rclone config file path."""
         options = QFileDialog.Options()
@@ -490,8 +668,9 @@ class FileSearchApp(QMainWindow):
             # Update the config path
             self.rclone_config_path = file_path
             # Update the status bar
-            self.statusBar().showMessage(f"rclone.config path: {self.rclone_config_path} | Mount Root: {self.drives_dir}")
+            self.update_status_bar()
             print(f"rclone.config path changed to: {self.rclone_config_path}")
+            self.update_global_config({"rclone_config_path": self.rclone_config_path})
             # Optionally, you can add logic here to reload or apply the new config
 
     def change_mount_root_directory(self):
@@ -508,19 +687,20 @@ class FileSearchApp(QMainWindow):
             # Update the drives_dir
             self.drives_dir = directory
             # Update the status bar
-            self.statusBar().showMessage(f"rclone.config path: {self.rclone_config_path} | Mount Root: {self.drives_dir}")
+            self.update_status_bar()
             print(f"Mount Root Directory changed to: {self.drives_dir}")
 
             # Update global.config
-            self.update_global_config()
+            self.update_global_config({"drives_dir": self.drives_dir})
 
-    def update_global_config(self):
-        """Update the global.config file with the new drives_dir."""
+    def update_global_config(self, updates):
+        """Update the global.config file with new key/value pairs."""
         try:
-            config_data = {"drives_dir": self.drives_dir}
+            config_data = self.load_global_config()
+            config_data.update(updates)
             with open(GLOBAL_CONFIG_PATH, 'w') as config_file:
                 json.dump(config_data, config_file, indent=4)
-            print(f"global.config updated with drives_dir: {self.drives_dir}")
+            print(f"global.config updated with: {updates}")
         except Exception as e:
             self.show_error(f"Failed to update global.config: {e}")
 
@@ -542,6 +722,16 @@ class FileSearchApp(QMainWindow):
             print("Window icon set successfully.")
         except Exception as e:
             print(f"Error setting window icon: {e}")
+
+    def _svg_to_icon(self, svg_text, size):
+        """Render an SVG string to a QIcon."""
+        renderer = QSvgRenderer(svg_text.encode("utf-8"))
+        pixmap = QPixmap(size.width(), size.height())
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QIcon(pixmap)
 
     def render_svg_icon(self):
         """Render the embedded SVG icon and return a QPixmap."""
@@ -567,56 +757,82 @@ class FileSearchApp(QMainWindow):
             self.date_edit.setEnabled(False)
             print("Modified Date filter disabled.")
 
+    def start_filter_loading(self):
+        """Load filter values in a background thread to keep UI responsive."""
+        if self._filter_loading:
+            return
+        self._filter_loading = True
+
+        self.drive_combo.clear()
+        self.drive_combo.addItem("Loading...")
+        self.drive_combo.setEnabled(False)
+        self.file_type_combo.clear()
+        self.file_type_combo.addItem("Loading...")
+        self.file_type_combo.setEnabled(False)
+
+        self.statusBar().showMessage("Loading filters...")
+
+        self.filter_loader = FilterLoader(self.db_path)
+        self.filter_loader.loaded_signal.connect(self.apply_filter_data)
+        self.filter_loader.error_signal.connect(self.handle_filter_error)
+        self.filter_loader.finished.connect(self.handle_filter_finished)
+        self.filter_loader.start()
+
+    def handle_filter_finished(self):
+        self._filter_loading = False
+
+    def apply_filter_data(self, drives, file_types):
+        self.drive_combo.clear()
+        self.drive_combo.addItem("Any")
+        for drive in drives:
+            self.drive_combo.addItem(drive)
+        self.drive_combo.setEnabled(True)
+
+        self.file_type_combo.clear()
+        self.file_type_combo.addItem("Any")
+        for file_type in file_types:
+            self.file_type_combo.addItem(file_type)
+        self.file_type_combo.setEnabled(True)
+
+        self._filters_loaded = True
+        self.statusBar().showMessage(
+            f"Filters loaded | DB: {self.db_path} | Mount Root: {self.drives_dir}"
+        )
+        print("Filters loaded successfully.")
+
+    def handle_filter_error(self, message):
+        print(f"Filter load error: {message}")
+        self.drive_combo.clear()
+        self.drive_combo.addItem("Any")
+        self.drive_combo.setEnabled(False)
+        self.file_type_combo.clear()
+        self.file_type_combo.addItem("Any")
+        self.file_type_combo.setEnabled(False)
+        self.statusBar().showMessage(f"Filter load failed: {message}")
+
     def populate_drive_combo(self):
-        """Populate the drive combo box with distinct drives from the database."""
-        print("Populating Drive ComboBox...")
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT drive FROM files ORDER BY drive")
-            drives = cursor.fetchall()
-            print(f"Found {len(drives)} distinct drives.")
-            for drive in drives:
-                if drive[0]:  # Ensure drive is not None or empty
-                    self.drive_combo.addItem(drive[0])
-            conn.close()
-            print("Drive ComboBox populated successfully.")
-        except sqlite3.OperationalError as e:
-            print(f"Error populating drive combo: {e}")
-            self.show_error(f"Database Error: {e}")
-        except Exception as e:
-            print(f"Unexpected error populating drive combo: {e}")
-            self.show_error(f"Unexpected Error: {e}")
+        """Populate the drive combo box (async)."""
+        self.start_filter_loading()
 
     def populate_file_type_combo(self):
-        """Populate the file type combo box with distinct file types from the database."""
-        print("Populating File Type ComboBox...")
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            # Limiting to top 1000 to prevent performance issues
-            cursor.execute("SELECT DISTINCT file_type FROM files ORDER BY file_type LIMIT 1000")
-            file_types = cursor.fetchall()
-            print(f"Found {len(file_types)} distinct file types (Top 1000).")
-            for ft in file_types:
-                if ft[0]:  # Ensure file_type is not None or empty
-                    self.file_type_combo.addItem(ft[0])
-            conn.close()
-            print("File Type ComboBox populated successfully.")
-        except sqlite3.OperationalError as e:
-            print(f"Error populating file type combo: {e}")
-            self.show_error(f"Database Error: {e}")
-        except Exception as e:
-            print(f"Unexpected error populating file type combo: {e}")
-            self.show_error(f"Unexpected Error: {e}")
+        """Populate the file type combo box (async)."""
+        self.start_filter_loading()
 
     def perform_search(self):
         """Generate and execute the SQL query based on the filters, then display the results."""
         print("\nPerforming search with the following criteria:")
+        if not self.db_path or not os.path.exists(self.db_path):
+            self.show_error(f"Database not found at: {self.db_path}")
+            return
+
         name = self.name_input.text().strip()
         size = self.size_input.text().strip()
         drive = self.drive_combo.currentText()
         file_type = self.file_type_combo.currentText()
+        if drive == "Loading...":
+            drive = "Any"
+        if file_type == "Loading...":
+            file_type = "Any"
 
         # Handle Modified Date based on the checkbox
         if self.date_checkbox.isChecked():
@@ -678,7 +894,7 @@ class FileSearchApp(QMainWindow):
 
         start_time = time.time()
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=3)
             cursor = conn.cursor()
             print("Executing query...")
             cursor.execute(query, params)
@@ -798,7 +1014,7 @@ class FileSearchApp(QMainWindow):
     def adjust_column_widths(self):
         """Adjust the column widths based on the current window width."""
         total_width = self.results_table.viewport().width()
-        full_name_width = int(total_width * 0.7)
+        full_name_width = int(total_width * 0.6)
         remaining_width = total_width - full_name_width
 
         # Assuming 4 remaining columns: Drive, Size (bytes), File Type, Modified Date
@@ -819,6 +1035,8 @@ class FileSearchApp(QMainWindow):
         """Handle the show event to adjust column widths initially."""
         super().showEvent(event)
         self.adjust_column_widths()
+        if not self._filters_loaded:
+            QTimer.singleShot(0, self.start_filter_loading)
 
     def open_context_menu(self, position: QPoint):
         """Open a contextual menu on right-click with options to copy paths and show folder."""
@@ -900,13 +1118,26 @@ class FileSearchApp(QMainWindow):
         clipboard.setMimeData(mime_data)
         print(f"Copied File to clipboard: {full_path}")
 
+    def open_in_file_manager(self, path):
+        """Open a path in the OS file manager."""
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["explorer", path])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["nemo", path])
+            print(f"Opened file manager at: {path}")
+        except Exception as e:
+            self.show_error(f"Failed to open file manager: {e}")
+
     def show_folder(self, row=None):
         """
-        Show the selected folder in Nemo File Manager.
+        Show the selected folder in the system file manager.
         If the drive is 'localdrive', open directly without mounting.
         Otherwise, perform mounting as needed and then open.
         """
-        print("Attempting to show folder in Nemo...")
+        print("Attempting to show folder in file manager...")
 
         if row is None:
             # If row is not provided, get the currently selected row
@@ -955,14 +1186,7 @@ class FileSearchApp(QMainWindow):
                 self.show_error(f"The path '{local_path}' does not exist.")
                 return
 
-            # Open Nemo at the specific path
-            try:
-                print(f"Opening Nemo at '{local_path}'...")
-                subprocess.Popen(['nemo', local_path])
-                print("Nemo opened successfully.")
-            except Exception as e:
-                self.show_error(f"Failed to open Nemo: {e}")
-                return
+            self.open_in_file_manager(local_path)
         else:
             # Handle non-local drives (remote drives)
             # Create subdirectory for the drive if it doesn't exist
@@ -979,6 +1203,12 @@ class FileSearchApp(QMainWindow):
             # If empty, mount the drive
             if not os.listdir(drive_mount_path):
                 print(f"Directory '{drive_mount_path}' is empty. Attempting to mount the drive.")
+                if not self.rclone_path:
+                    self.show_error(
+                        "rclone not found. Set RCLONE_PATH in the environment or add "
+                        "\"rclone_path\" to global.config."
+                    )
+                    return
                 # Parse rclone.config to find the remote matching the drive_name
                 config = configparser.ConfigParser()
                 if not os.path.exists(self.rclone_config_path):
@@ -998,7 +1228,7 @@ class FileSearchApp(QMainWindow):
 
                 # Mount the drive using rclone
                 mount_command = [
-                    "rclone",
+                    self.rclone_path,
                     "mount",
                     remote,
                     drive_mount_path,
@@ -1015,27 +1245,20 @@ class FileSearchApp(QMainWindow):
                     self.show_error(f"Failed to mount drive '{remote}': {e}")
                     return
 
-            # Construct the path to open in Nemo
+            # Construct the path to open in the file manager
             if is_folder:
                 nemo_path = os.path.join(self.drives_dir, drive_name, relative_path)
             else:
                 nemo_path = os.path.dirname(os.path.join(self.drives_dir, drive_name, relative_path))
 
-            print(f"Constructed Nemo path: {nemo_path}")
+            print(f"Constructed file manager path: {nemo_path}")
 
             # Verify that the path exists
             if not os.path.exists(nemo_path):
                 self.show_error(f"The path '{nemo_path}' does not exist.")
                 return
 
-            # Open Nemo at the specific path
-            try:
-                print(f"Opening Nemo at '{nemo_path}'...")
-                subprocess.Popen(['nemo', nemo_path])
-                print("Nemo opened successfully.")
-            except Exception as e:
-                self.show_error(f"Failed to open Nemo: {e}")
-                return
+            self.open_in_file_manager(nemo_path)
 
     def update_index(self):
         """Handle the Update Index button click to execute rclone_list_files.py and display output."""
@@ -1063,6 +1286,7 @@ class FileSearchApp(QMainWindow):
                 script_path = file_path
                 self.search_index_script_path = script_path  # Update the path
                 print(f"User selected script at {script_path}.")
+                self.update_global_config({"search_index_script_path": self.search_index_script_path})
             else:
                 print("User did not select a script. Aborting Update Index.")
                 QMessageBox.information(
@@ -1080,10 +1304,33 @@ class FileSearchApp(QMainWindow):
         self.results_table.hide()
         self.update_output_text.show()
         self.update_output_text.clear()
-        self.update_output_text.append(f"Executing: {' '.join(['python3', script_path])}\n\n")
+        args = []
+        effective_config_path = self.rclone_config_path
+        passed_data = read_last_passed_remotes()
+        if passed_data is not None:
+            passed_remotes, passed_config = passed_data
+            if not passed_remotes:
+                QMessageBox.warning(
+                    self,
+                    "Update Index",
+                    "No passed remotes found from the last test. Run tests in the Rclone Manager first.",
+                )
+                return
+            if passed_config:
+                effective_config_path = passed_config
+            args.extend(["--drives", *passed_remotes])
+        if effective_config_path:
+            args.extend(["--config", effective_config_path])
+        self.update_output_text.append(
+            f"Executing: {' '.join([sys.executable, script_path] + args)}\n\n"
+        )
 
         # Initialize and start the worker thread
-        self.thread = ScriptRunner(script_path)
+        env = os.environ.copy()
+        if self.rclone_path:
+            env["RCLONE_PATH"] = self.rclone_path
+        env["PASSED_REMOTES_FILE"] = passed_remotes_file_path()
+        self.thread = ScriptRunner(script_path, sys.executable, args=args, env=env)
         self.thread.output_signal.connect(self.append_output)
         self.thread.error_signal.connect(self.append_error)
         self.thread.finished_signal.connect(self.handle_script_finished)
@@ -1110,18 +1357,14 @@ class FileSearchApp(QMainWindow):
                 "Update Index Failed",
                 f"An error occurred while updating the index.\nReturn Code: {return_code}"
             )
+        self.refresh_filters()
 
     # **Optional Method: Refresh Filters After Update**
     def refresh_filters(self):
         """Refresh the drive and file type combo boxes after updating the index."""
         print("Refreshing Drive and File Type filters after index update.")
-        self.drive_combo.clear()
-        self.drive_combo.addItem("Any")
-        self.populate_drive_combo()
-
-        self.file_type_combo.clear()
-        self.file_type_combo.addItem("Any")
-        self.populate_file_type_combo()
+        self._filters_loaded = False
+        self.start_filter_loading()
     # **End of Optional Method**
 
 def main():
