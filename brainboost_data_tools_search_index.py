@@ -149,8 +149,10 @@ def read_subjective_conf_value(key: str):
 def read_last_passed_remotes():
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     userdata_path = read_subjective_conf_value("USERDATA_PATH") or "com_subjective_userdata"
+    userdata_path = os.path.expandvars(os.path.expanduser(str(userdata_path)))
     if not os.path.isabs(userdata_path):
         userdata_path = os.path.abspath(os.path.join(project_root, userdata_path))
+    userdata_path = os.path.normpath(userdata_path)
     results_path = os.path.join(userdata_path, "com_subjective_rclone", "last_passed_remotes.json")
     if not os.path.isfile(results_path):
         return None
@@ -169,8 +171,10 @@ def read_last_passed_remotes():
 def passed_remotes_file_path():
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     userdata_path = read_subjective_conf_value("USERDATA_PATH") or "com_subjective_userdata"
+    userdata_path = os.path.expandvars(os.path.expanduser(str(userdata_path)))
     if not os.path.isabs(userdata_path):
         userdata_path = os.path.abspath(os.path.join(project_root, userdata_path))
+    userdata_path = os.path.normpath(userdata_path)
     return os.path.join(userdata_path, "com_subjective_rclone", "last_passed_remotes.json")
 
 
@@ -296,7 +300,12 @@ class FileSearchApp(QMainWindow):
             conf_rclone_path = read_subjective_conf_value("RCLONE_PATH")
             self.rclone_path = resolve_rclone_executable(conf_rclone_path)
         self.rclone_tool_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "tool_rclone_config_manager.py")
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "subjective_tool_rclone_config_manager",
+                "subjective_tool_rclone_config_manager.py",
+            )
         )
 
         # Filter loading state
