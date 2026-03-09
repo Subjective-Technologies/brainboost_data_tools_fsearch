@@ -1,5 +1,4 @@
-PyQt5>=5.15.0
-pytest==8.0.0
-pytest-cov==4.1.0
--e file:///brainboost/packages/brainboost_data_source_logger_package
--e file:///brainboost/packages/brainboost_configuration_package
+# Runtime/build requirements for subjective_tool_data_fsearch
+
+brainboost-configuration-package @ git+https://github.com/Subjective-Technologies/brainboost_configuration_package.git
+PyQt5==5.15.10
